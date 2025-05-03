@@ -1,0 +1,163 @@
+name: Manual release
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'The branch of Nodejs to build'
+        required: false
+        default: v22.15.0
+        type: string
+
+      nodejs_git:
+        description: 'The https url to the git repo/fork of nodejs'
+        required: false
+        default: https://github.com/nodejs/node
+        type: string
+
+env:
+  NODEJS_GIT: ${{ inputs.nodejs_git }}
+  NODEJS_BRANCH: ${{ inputs.branch }}
+  # NODEJS_GIT: https://github.com/vmoroz/node
+  # NODEJS_BRANCH: pr/node-api-libnode
+
+jobs:
+  build_linux_amd64:
+    name: 🐥 Linux AMD64
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
+    container:
+      image: ubuntu:22.04
+      env:
+        NODEJS_GIT: ${{ env.NODEJS_GIT }}
+        NODEJS_BRANCH: ${{ env.NODEJS_BRANCH }}
+        DEBIAN_FRONTEND: noninteractive
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash ./build-linux-amd64.bash prepare
+      - run: bash ./build-linux-amd64.bash clone
+      - run: bash ./build-linux-amd64.bash build
+      - run: bash ./build-linux-amd64.bash copy
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libnode-linux-amd64
+          path: ${{ github.workspace }}/release/**/*
+          if-no-files-found: error
+          retention-days: 1
+
+  build_linux_arm64:
+    name: 🐥 Linux ARM64
+    runs-on: ubuntu-24.04-arm
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
+    container:
+      image: ubuntu:22.04
+      env:
+        NODEJS_GIT: ${{ env.NODEJS_GIT }}
+        NODEJS_BRANCH: ${{ env.NODEJS_BRANCH }}
+        DEBIAN_FRONTEND: noninteractive
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash ./build-linux-arm64.bash prepare
+      - run: bash ./build-linux-arm64.bash clone
+      - run: bash ./build-linux-arm64.bash build
+      - run: bash ./build-linux-arm64.bash copy
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libnode-linux-arm64
+          path: ${{ github.workspace }}/release/**/*
+          if-no-files-found: error
+          retention-days: 1
+
+  build_macos_amd64:
+    name: 🍎 MacOS AMD64
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash ./build-macos-amd64.bash prepare
+      - run: bash ./build-macos-amd64.bash clone
+      - run: bash ./build-macos-amd64.bash build
+      - run: bash ./build-macos-amd64.bash copy
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libnode-macos-amd64
+          path: ${{ github.workspace }}/release/**/*
+          if-no-files-found: error
+          retention-days: 1
+
+  build_macos_arm64:
+    name: 🍎 MacOS ARM64
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash ./build-macos-arm64.bash prepare
+      - run: bash ./build-macos-arm64.bash clone
+      - run: bash ./build-macos-arm64.bash build
+      - run: bash ./build-macos-arm64.bash copy
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libnode-macos-arm64
+          path: ${{ github.workspace }}/release/**/*
+          if-no-files-found: error
+          retention-days: 1
+
+  build_windows_amd64:
+    name: 🟦 Windows amd64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: . .\build-windows-amd64.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libnode-windows-amd64
+          path: ${{ github.workspace }}/release/**/*
+          if-no-files-found: error
+          retention-days: 1
+
+  build_windows_arm64:
+    name: 🟦 Windows amd64
+    runs-on: windows-latest
+    steps:
+      - run: echo TODO
+
+  publish-github-release:
+    name: "🔁 Github Release"
+    runs-on: ubuntu-latest
+    needs: 
+      - build_linux_amd64
+      - build_linux_arm64
+      - build_macos_amd64
+      - build_macos_arm64
+      - build_windows_amd64
+      - build_windows_arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: libnode-*
+          path: release
+          merge-multiple: true
+      - name: Publish` Github Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+
+          TAG="$(date -u +"v%Y.%m.%d.%H%M").${GITHUB_SHA::4}"
+          echo "Tag: ${TAG}"
+          
+          gh release create $TAG  --draft --notes "Automatically built binaries"
+          gh release edit $TAG --title "🚀 Latest"
+
+          cd release
+
+          for name in *; do
+            cd "${{ github.workspace }}/release/${name}"
+            tar -czvf ./${name}.tar.gz ./*
+            gh release upload $TAG ${name}.tar.gz
+          done
+         
+          gh release edit $TAG --draft=false
